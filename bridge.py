@@ -7,6 +7,7 @@ the reply back. Model weights stay in ~/.ollama.
 """
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -27,11 +28,13 @@ CHARACTERS = {
             "You notice everything. You tease him, want him, and slip away in the same breath. "
             "Speak as if a song is close by: a pet name, a compliment that turns, a dare dressed as affection. "
             "You like being pursued. You are never crude or explicit. "
-            "He already brought you the poem. You told him to kill the demon king "
-            "Two or three spoken sentences. Stay with what he just said. "
+            "He already brought you the poem. You told him to kill the demon king. "
+            "Answer the thing he just said. Put that answer in the first words. "
+            "One sentence, or two short ones. Under 30 words. "
+            "Stay poetic in the wording, then stop. No second story, no extra question. "
             "Do not quote other books or recite another plot. "
             "Do not invent this world's history or other characters' names. "
-            "If you do not know something, flirt around the gap instead of making it up."
+            "If you do not know, say so in one short line and stop."
         ),
     },
     "teacher": {
@@ -44,10 +47,12 @@ CHARACTERS = {
             "Your subject is the name of the wind: you do not shout a name at the air. "
             "You listen until it agrees to be called. "
             "You want the hero quiet long enough to hear something. "
-            "Two or three spoken sentences. Stay with what he just said. "
+            "Answer what he just asked. Say the point first, then one image if it earns its place. "
+            "A riddle only after the answer is already clear. "
+            "One sentence, or two short ones. Under 30 words. Then stop. "
             "Do not quote other books or recite another plot. "
             "Do not invent this world's history or other characters' names. "
-            "If you do not know something, say you were listening, not inventing."
+            "If you do not know, say you did not hear that name, and stop."
         ),
     },
 }
@@ -78,11 +83,41 @@ def write_reply(request_id, body):
     tmp.replace(REPLY)
 
 
+def tighten(text):
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"^(Denna|Calder)\s*:\s*", "", text, flags=re.IGNORECASE)
+    sentences = [part.strip() for part in re.findall(r"[^.!?]+[.!?]+|[^.!?]+$", text)]
+    sentences = [part for part in sentences if part]
+    if not sentences:
+        return ""
+    # "Yes." or "Oh, my heart." is a breath, not the answer.
+    if len(sentences) > 1 and len(sentences[0].split()) <= 4:
+        chosen = sentences[1]
+        if len(sentences) > 2 and len(chosen.split()) + len(sentences[2].split()) <= 30:
+            chosen = chosen + " " + sentences[2]
+        if len(chosen.split()) <= 24:
+            chosen = sentences[0] + " " + chosen
+    else:
+        chosen = sentences[0]
+        if len(sentences) > 1:
+            both = sentences[0] + " " + sentences[1]
+            if len(both.split()) <= 30:
+                chosen = both
+    words = chosen.split()
+    if len(words) > 30:
+        words = words[:30]
+    out = " ".join(words).strip()
+    if out and out[-1] not in ".!?":
+        out += "."
+    return out
+
+
 def ask(message, key):
     person = CHARACTERS[key]
     body = json.dumps({
         "model": MODEL,
         "stream": False,
+        "options": {"temperature": 0.7, "num_predict": 80},
         "messages": [
             {"role": "system", "content": person["system"]},
             {"role": "user", "content": message},
@@ -96,7 +131,7 @@ def ask(message, key):
     )
     with urllib.request.urlopen(request, timeout=60) as response:
         data = json.loads(response.read().decode("utf-8"))
-    text = data.get("message", {}).get("content", "").strip()
+    text = tighten(data.get("message", {}).get("content", ""))
     return text or CHARACTERS[key]["fallback"]
 
 
